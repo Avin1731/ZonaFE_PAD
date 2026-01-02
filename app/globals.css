@@ -1,0 +1,80 @@
+/* App/globals.css */
+@import "tailwindcss";
+
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0a0a0a;
+    --foreground: #ededed;
+  }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0 }
+  to { opacity: 1 }
+}
+.animate-fadeIn { animation: fadeIn .3s ease-out }
+
+@keyframes popCyber {
+  0% { transform: scale(.6) rotate(-4deg); opacity: 0 }
+  100% { transform: scale(1) rotate(0deg); opacity: 1 }
+}
+.animate-popCyber { animation: popCyber .35s cubic-bezier(.2,1.4,.3,1) }
+
+@keyframes popAnime {
+  0% { transform: translateY(40px) scale(.7); opacity: 0 }
+  100% { transform: translateY(0) scale(1); opacity: 1 }
+}
+.animate-popAnime { animation: popAnime .35s ease-out }
+
+@keyframes popDark {
+  0% { transform: scale(.8); opacity: 0 }
+  100% { transform: scale(1); opacity: 1 }
+}
+.animate-popDark { animation: popDark .3s ease-out }
+
+@keyframes popGlass {
+  0% { backdrop-filter: blur(0px); transform: scale(.8); opacity: 0 }
+  100% { backdrop-filter: blur(15px); transform: scale(1); opacity: 1 }
+}
+.animate-popGlass { animation: popGlass .4s ease }
+
+/* Kombinasi Bounce + Tilt + Vibrate */
+@keyframes bounce-vibrate {
+  0% {
+    transform: translateY(0) rotate(0deg);
+  }
+  10% {
+    transform: translateY(-6px) rotate(-2deg);
+  }
+  20% {
+    transform: translateY(0) rotate(2deg);
+  }
+  30% {
+    transform: translateY(-4px) rotate(-1deg);
+  }
+  40% {
+    transform: translateY(0) rotate(1deg);
+  }
+  50% {
+    transform: translateY(-8px) rotate(0deg);
+  }
+  60%, 100% {
+    transform: translateY(0) rotate(0deg);
+  }
+}
+
+.animate-bounce-vibrate {
+  animation: bounce-vibrate 1.8s ease-in-out infinite;
+}
+
+
+
+body {
+  /* Background putih bersih tanpa grid pattern */
+  background-color: #FFFFFF;
+}
