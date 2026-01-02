@@ -45,8 +45,8 @@ export default function AdminLoginPage() {
       await login({ 
         email, 
         password,
-        role_id: ROLE_ID_ADMIN,
-        jenis_dlh_id: JENIS_ID_ADMIN
+        // role_id: ROLE_ID_ADMIN,
+        // jenis_dlh_id: JENIS_ID_ADMIN
       });
       
       console.log("API Login Response:", Response);
