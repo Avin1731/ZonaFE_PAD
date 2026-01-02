@@ -1,12 +1,9 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { FiX, FiDownload, FiCheck, FiXCircle, FiFileText, FiCalendar, FiHardDrive, FiFile } from 'react-icons/fi';
 import axios from '@/lib/axios';
-
-// API Base URL - same as axios config
-const API_BASE_URL = 'http://localhost:8000';
 
 export interface DocumentInfo {
   id: number;
@@ -53,8 +50,13 @@ export default function DocumentPreviewModal({
   const [rejectMode, setRejectMode] = useState(false);
   const [catatan, setCatatan] = useState('');
   const [processing, setProcessing] = useState(false);
+  
+  // ✅ State untuk blob URL (PERSIS seperti di DLH dashboard)
+  const [pdfBlobUrl, setPdfBlobUrl] = useState<string | null>(null);
+  const [loadingPdf, setLoadingPdf] = useState(false);
+  const blobUrlRef = useRef<string | null>(null);
 
-  // Fetch document data
+  // Fetch document info (metadata)
   useEffect(() => {
     if (!isOpen || !submissionId) return;
     
@@ -81,6 +83,50 @@ export default function DocumentPreviewModal({
     fetchDocument();
   }, [isOpen, submissionId, documentType]);
 
+  // ✅ Fetch PDF blob TERPISAH (PERSIS seperti di DLH dashboard)
+  useEffect(() => {
+    if (!isOpen || !submissionId) return;
+    
+    setLoadingPdf(true);
+    
+    // Cleanup previous URL
+    if (blobUrlRef.current) {
+      URL.revokeObjectURL(blobUrlRef.current);
+      blobUrlRef.current = null;
+    }
+    setPdfBlobUrl(null);
+    
+    // Endpoint untuk preview PDF - sama format dengan DLH
+    // DLH: /api/dinas/upload/preview/${apiEndpoint}
+    // Pusdatin: /api/pusdatin/review/submission/${submissionId}/preview/${docType}
+    const docTypeParam = documentType === 'buku1' ? 'ringkasan-eksekutif' : documentType === 'buku2' ? 'laporan-utama' : 'lampiran';
+    
+    axios.get(`/api/pusdatin/review/submission/${submissionId}/preview/${docTypeParam}`, {
+      responseType: 'blob'
+    })
+    .then(response => {
+      const blob = new Blob([response.data], { type: 'application/pdf' });
+      const url = URL.createObjectURL(blob);
+      blobUrlRef.current = url;
+      setPdfBlobUrl(url);
+    })
+    .catch(err => {
+      console.error('Error loading PDF:', err);
+      // Jangan set error di sini, biarkan info panel tetap tampil
+    })
+    .finally(() => {
+      setLoadingPdf(false);
+    });
+    
+    // Cleanup on unmount or when deps change
+    return () => {
+      if (blobUrlRef.current) {
+        URL.revokeObjectURL(blobUrlRef.current);
+        blobUrlRef.current = null;
+      }
+    };
+  }, [isOpen, submissionId, documentType]);
+
   // Reset state when modal closes
   useEffect(() => {
     if (!isOpen) {
@@ -88,6 +134,7 @@ export default function DocumentPreviewModal({
       setCatatan('');
       setDocData(null);
       setError(null);
+      setPdfBlobUrl(null);
     }
   }, [isOpen]);
 
@@ -119,30 +166,36 @@ export default function DocumentPreviewModal({
     }
   };
 
-  // URL untuk preview di iframe (inline PDF) - public route
-  const getPreviewUrl = () => {
-    if (!submissionId) return null;
-    const docTypeParam = documentType === 'buku1' ? 'ringkasan-eksekutif' : documentType === 'buku2' ? 'laporan-utama' : 'lampiran';
-    return `${API_BASE_URL}/api/document/preview/${submissionId}/${docTypeParam}`;
-  };
-
-  // URL untuk download file - public route
-  const getDownloadUrl = () => {
-    if (!submissionId) return null;
-    const docTypeParam = documentType === 'buku1' ? 'ringkasan-eksekutif' : documentType === 'buku2' ? 'laporan-utama' : 'lampiran';
-    return `${API_BASE_URL}/api/document/download/${submissionId}/${docTypeParam}`;
-  };
-
-  const handleDownload = () => {
-    const url = getDownloadUrl();
-    if (url) {
-      const link = document.createElement('a');
+  // ✅ Download handler PERSIS seperti DLH dashboard
+  const handleDownload = async () => {
+    if (!submissionId) return;
+    
+    try {
+      const docTypeParam = documentType === 'buku1' ? 'ringkasan-eksekutif' : documentType === 'buku2' ? 'laporan-utama' : 'lampiran';
+      const response = await axios.get(
+        `/api/pusdatin/review/submission/${submissionId}/download/${docTypeParam}`,
+        { responseType: 'blob' }
+      );
+      
+      const blob = new Blob([response.data], { type: 'application/pdf' });
+      const url = URL.createObjectURL(blob);
+      const link = window.document.createElement('a');
       link.href = url;
-      link.setAttribute('download', '');
-      link.target = '_blank';
-      document.body.appendChild(link);
+      link.download = docData?.document?.nama_file || `${docTypeParam}.pdf`;
+      window.document.body.appendChild(link);
       link.click();
-      document.body.removeChild(link);
+      window.document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Error downloading:', err);
+      setError('Gagal mengunduh dokumen');
+    }
+  };
+
+  // ✅ Open in new tab menggunakan blob URL
+  const handleOpenInNewTab = () => {
+    if (pdfBlobUrl) {
+      window.open(pdfBlobUrl, '_blank');
     }
   };
 
@@ -260,26 +313,33 @@ export default function DocumentPreviewModal({
               {/* Right Panel - Document Preview */}
               <div className="flex-1 flex flex-col pr-4 py-4 bg-gray-200">
                 {/* Preview Area */}
-                <div className="flex-1  rounded-xl overflow-hidden">
-                  {loading ? (
+                <div className="flex-1 rounded-xl overflow-hidden bg-white">
+                  {loadingPdf ? (
                     <div className="w-full h-full flex items-center justify-center">
-                      <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-600"></div>
+                      <div className="text-center">
+                        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-600 mx-auto mb-4"></div>
+                        <p className="text-gray-600">Memuat dokumen...</p>
+                      </div>
                     </div>
                   ) : error ? (
-                    <div className="w-full h-full flex items-center justify-center text-gray-500">
-                      {error}
+                    <div className="w-full h-full flex items-center justify-center">
+                      <div className="text-center p-8">
+                        <svg className="w-16 h-16 text-red-400 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        <p className="text-gray-600">{error}</p>
+                      </div>
                     </div>
-                  ) : docData?.document?.format_file === 'PDF' ? (
+                  ) : pdfBlobUrl ? (
                     <iframe
-                      src={getPreviewUrl() || ''}
+                      src={pdfBlobUrl}
                       className="w-full h-full border-0"
                       title="Document Preview"
                     />
                   ) : (
                     <div className="w-full h-full flex flex-col items-center justify-center text-gray-500">
                       <FiFile className="w-16 h-16 mb-4" />
-                      <p className="text-lg font-medium">Preview tidak tersedia</p>
-                      <p className="text-sm">Format {docData?.document?.format_file} tidak dapat ditampilkan</p>
+                      <p className="text-lg font-medium">Dokumen tidak tersedia</p>
                     </div>
                   )}
                 </div>

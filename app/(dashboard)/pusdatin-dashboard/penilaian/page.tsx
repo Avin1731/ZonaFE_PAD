@@ -61,18 +61,30 @@ function TabPenilaianSLHD({ provinsiList, submissions, onRefreshSubmissions }: T
             const penilaianRes = await axios.get(`/api/pusdatin/penilaian/slhd/${year}`);
             
             // Backend mengembalikan array semua penilaian SLHD
-            const penilaianData = penilaianRes.data.data;
+            const penilaianData = penilaianRes.data?.data || penilaianRes.data || [];
             if (penilaianData && penilaianData.length > 0) {
                 setPenilaianList(penilaianData);
                 const latestPenilaian = penilaianData[0];
                 setPenilaianSLHD(latestPenilaian);
                 setSelectedPenilaianId(latestPenilaian.id);
                 // Fetch parsed data jika ada penilaian
-                const parsedRes = await axios.get(`/api/pusdatin/penilaian/slhd/parsed/${latestPenilaian.id}`);
-                setParsedData(parsedRes.data.data || []);
+                try {
+                    const parsedRes = await axios.get(`/api/pusdatin/penilaian/slhd/parsed/${latestPenilaian.id}`);
+                    setParsedData(parsedRes.data?.data || parsedRes.data || []);
+                } catch (parseErr) {
+                    console.error('Error fetching parsed data:', parseErr);
+                    setParsedData([]);
+                }
+            } else {
+                setPenilaianList([]);
+                setPenilaianSLHD(null);
+                setParsedData([]);
             }
         } catch (err) {
             console.error('Error fetching data:', err);
+            setPenilaianList([]);
+            setPenilaianSLHD(null);
+            setParsedData([]);
         } finally {
             setLoading(false);
         }
@@ -838,18 +850,30 @@ function TabPenilaianPenghargaan({ provinsiList, submissions }: TabProps) {
             setLoading(true);
             const penilaianRes = await axios.get(`/api/pusdatin/penilaian/penghargaan/${year}`);
             
-            const penilaianData = penilaianRes.data.data;
+            const penilaianData = penilaianRes.data?.data || penilaianRes.data || [];
             if (penilaianData && penilaianData.length > 0) {
                 setPenilaianList(penilaianData);
                 const latestPenilaian = penilaianData[0];
                 setPenilaianPenghargaan(latestPenilaian);
                 setSelectedPenilaianId(latestPenilaian.id);
                 // Fetch parsed data jika ada penilaian
-                const parsedRes = await axios.get(`/api/pusdatin/penilaian/penghargaan/parsed/${latestPenilaian.id}`);
-                setParsedData(parsedRes.data.data || []);
+                try {
+                    const parsedRes = await axios.get(`/api/pusdatin/penilaian/penghargaan/parsed/${latestPenilaian.id}`);
+                    setParsedData(parsedRes.data?.data || parsedRes.data || []);
+                } catch (parseErr) {
+                    console.error('Error fetching parsed data:', parseErr);
+                    setParsedData([]);
+                }
+            } else {
+                setPenilaianList([]);
+                setPenilaianPenghargaan(null);
+                setParsedData([]);
             }
         } catch (err) {
             console.error('Error fetching data:', err);
+            setPenilaianList([]);
+            setPenilaianPenghargaan(null);
+            setParsedData([]);
         } finally {
             setLoading(false);
         }
@@ -1347,18 +1371,20 @@ function TabValidasi1({ provinsiList, submissions }: TabProps) {
             setLoading(true);
             const validasi1Res = await axios.get(`/api/pusdatin/penilaian/validasi-1/${year}`);
             
-            const validasi1Data = validasi1Res.data;
+            const validasi1Data = validasi1Res.data?.data || validasi1Res.data || [];
             if (validasi1Data && validasi1Data.length > 0) {
                 setParsedData(validasi1Data);
                 // Check if finalized (all items have status finalized or check from parent)
                 const anyFinalized = validasi1Data.some((item: ParsedValidasi1) => item.status === 'finalized');
                 setIsFinalized(anyFinalized);
+            } else {
+                setParsedData([]);
+                setIsFinalized(false);
             }
         } catch (err: any) {
             console.error('Error fetching data:', err);
-            if (err.response?.status === 404) {
-                setParsedData([]);
-            }
+            setParsedData([]);
+            setIsFinalized(false);
         } finally {
             setLoading(false);
         }
@@ -1570,12 +1596,13 @@ function TabValidasi2({ provinsiList, submissions }: TabProps) {
         try {
             setLoading(true);
             const response = await axios.get(`/api/pusdatin/penilaian/validasi-2/${year}`);
-            setParsedData(response.data || []);
-            setIsFinalized(response.data.length > 0 && response.data[0]?.status === 'finalized');
+            const data = response.data?.data || response.data || [];
+            setParsedData(data);
+            setIsFinalized(Array.isArray(data) && data.length > 0 && data[0]?.status === 'finalized');
         } catch (err: any) {
-            if (err.response?.status !== 404) {
-                console.error('Error fetching data:', err);
-            }
+            console.error('Error fetching data:', err);
+            setParsedData([]);
+            setIsFinalized(false);
         } finally {
             setLoading(false);
         }
@@ -1848,11 +1875,9 @@ function TabPenetapanPeringkat() {
             const response = await axios.get(`/api/pusdatin/penilaian/validasi-2/${year}/ranked`, {
                 params: { kategori: selectedKategori, top: selectedJenisPeringkat === 'all' ? 999 : topN }
             });
-            setRankedData(response.data.data || []);
+            setRankedData(response.data?.data || response.data || []);
         } catch (err: any) {
-            if (err.response?.status !== 404) {
-                console.error('Error fetching ranked data:', err);
-            }
+            console.error('Error fetching ranked data:', err);
             setRankedData([]);
         } finally {
             setLoading(false);
@@ -2092,13 +2117,13 @@ function TabWawancara() {
         try {
             setLoading(true);
             const response = await axios.get(`/api/pusdatin/penilaian/wawancara/${year}`);
-            setWawancaraData(response.data.data || []);
-            setIsFinalized(response.data.data?.[0]?.is_finalized || false);
+            const data = response.data?.data || response.data || [];
+            setWawancaraData(data);
+            setIsFinalized(Array.isArray(data) && data.length > 0 && data[0]?.is_finalized || false);
         } catch (err: any) {
-            if (err.response?.status !== 404) {
-                console.error('Error fetching data:', err);
-            }
+            console.error('Error fetching data:', err);
             setWawancaraData([]);
+            setIsFinalized(false);
         } finally {
             setLoading(false);
         }
@@ -2131,7 +2156,7 @@ function TabWawancara() {
         try {
             setLoadingRekap(true);
             const response = await axios.get(`/api/pusdatin/penilaian/rekap/${year}/dinas/${idDinas}`);
-            setRekapData(response.data.data);
+            setRekapData(response.data?.data || response.data || null);
         } catch (err: any) {
             console.error('Error fetching rekap:', err);
             setRekapData(null);
@@ -2622,14 +2647,40 @@ export default function PenilaianPage() {
         const fetchSharedData = async () => {
             try {
                 setSharedDataLoading(true);
-                const [provincesRes, submissionsRes, progressRes] = await Promise.all([
-                    axios.get('/api/wilayah/provinces'),
-                    axios.get(`/api/pusdatin/penilaian/submissions?year=${year}`),
-                    axios.get(`/api/pusdatin/penilaian/progress-stats?year=${year}`)
-                ]);
-                setProvinsiList(provincesRes.data?.data || []);
-                setSubmissions(submissionsRes.data?.data || []);
-                setProgressStats(progressRes.data.data);
+                
+                // Fetch dengan error handling individual - jangan pakai Promise.all
+                // Karena kalau 1 gagal, semua gagal
+                let provincesData: Province[] = [];
+                let submissionsData: DinasSubmission[] = [];
+                let progressData = null;
+                
+                // Fetch provinces
+                try {
+                    const provincesRes = await axios.get('/api/wilayah/provinces');
+                    provincesData = provincesRes.data?.data || provincesRes.data || [];
+                } catch (err) {
+                    console.error('Error fetching provinces:', err);
+                }
+                
+                // Fetch submissions
+                try {
+                    const submissionsRes = await axios.get(`/api/pusdatin/penilaian/submissions?year=${year}`);
+                    submissionsData = submissionsRes.data?.data || submissionsRes.data || [];
+                } catch (err) {
+                    console.error('Error fetching submissions:', err);
+                }
+                
+                // Fetch progress stats
+                try {
+                    const progressRes = await axios.get(`/api/pusdatin/penilaian/progress-stats?year=${year}`);
+                    progressData = progressRes.data?.data || progressRes.data || null;
+                } catch (err) {
+                    console.error('Error fetching progress stats:', err);
+                }
+                
+                setProvinsiList(provincesData);
+                setSubmissions(submissionsData);
+                setProgressStats(progressData);
             } catch (err) {
                 console.error('Error fetching shared data:', err);
             } finally {
