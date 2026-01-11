@@ -2,7 +2,7 @@ import Axios, { AxiosError, AxiosResponse, InternalAxiosRequestConfig } from 'ax
 
 const axios = Axios.create({
   // Pastikan URL di Environment Variable Vercel (FE) sudah mengarah ke Koyeb
-  baseURL: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api',
+  baseURL: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000',
   headers: {
     'X-Requested-With': 'XMLHttpRequest',
     'Accept': 'application/json',
