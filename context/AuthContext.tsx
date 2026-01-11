@@ -155,17 +155,20 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const register = async (data: RegisterData) => {
     setIsLoading(true);
     try {
-      const response = await axios.post('/api/auth/register', data);
+      // FIX: Sesuaikan rute dengan routes/api.php lu (tanpa prefix /auth/)
+      const response = await axios.post('/api/register', data);
       const token = response.data.token;
+      const userData = response.data.user;
       
       localStorage.setItem('auth_token', token);
-      localStorage.setItem('user_data', JSON.stringify(response.data.user));
-      setUser(response.data.user);
+      localStorage.setItem('user_data', JSON.stringify(userData));
+      setUser(userData);
       
-      const roleName = response.data.user.role.name.toLowerCase();
+      const roleName = userData.role.name.toLowerCase();
       if (roleName === 'admin') router.push('/admin-dashboard');
       else if (roleName === 'pusdatin') router.push('/pusdatin-dashboard');
-      else router.push('/dlh-dashboard');
+      else if (roleName === 'provinsi' || roleName === 'kabupaten/kota') router.push('/dlh-dashboard');
+      else router.push('/');
 
     } catch (error) {
       console.error("Register failed:", error);
