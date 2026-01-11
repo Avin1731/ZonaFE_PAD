@@ -9,19 +9,28 @@ export default function DashboardLayout({
 }: {
   children: React.ReactNode;
 }) {
-  // Ambil isLoading langsung dari Context
   const { user, isLoading } = useAuth(); 
   const router = useRouter();
   const pathname = usePathname();
 
   useEffect(() => {
     // 1. JANGAN LAKUKAN APA-APA SELAMA MASIH LOADING
-    // Biarkan AuthContext menyelesaikan pengecekan localStorage dulu
     if (isLoading) return;
 
-    // 2. JIKA LOADING SELESAI TAPI USER NULL -> TENDANG KE LOGIN
+    // 2. JIKA LOADING SELESAI TAPI USER NULL -> CEK SAFETY NET DULU
     if (!user) {
-      console.log('❌ Unauthorized access (No User), redirecting...');
+      // 🔥 SAFETY CHECK: Cek token di localStorage secara manual
+      // Kadang AuthContext 'isLoading' sudah false, tapi state 'user' belum ter-set.
+      // Kalau di localStorage ada token, berarti user SEBENARNYA login. JANGAN DIUSIR.
+      const token = typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null;
+      
+      if (token) {
+         console.log('⏳ State delay detected: Token exists but User state is null. Waiting for sync...');
+         return; // JANGAN REDIRECT. Tunggu siklus render berikutnya.
+      }
+
+      // Kalau token beneran gak ada, baru tendang.
+      console.log('❌ Unauthorized access (No User & No Token), redirecting...');
       router.push('/login');
       return;
     }
@@ -35,7 +44,6 @@ export default function DashboardLayout({
       else if (roleName === 'pusdatin') correctDashboard = '/pusdatin-dashboard';
       else if (roleName === 'provinsi' || roleName === 'kabupaten/kota') correctDashboard = '/dlh-dashboard';
 
-      // Hanya redirect jika dashboard tujuan ada isinya dan URL sekarang salah
       if (correctDashboard && !pathname.startsWith(correctDashboard)) {
         console.log(`⚠️ User ${roleName} nyasar ke ${pathname}. Redirecting ke: ${correctDashboard}`);
         router.push(correctDashboard);
@@ -46,7 +54,6 @@ export default function DashboardLayout({
 
   // --- TAMPILAN ---
 
-  // 1. Tampilkan Loading Screen jika Context sedang bekerja
   if (isLoading) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-gray-50">
@@ -58,16 +65,13 @@ export default function DashboardLayout({
     );
   }
 
-  // 2. Jika Loading Selesai tapi User Kosong (Sedang proses redirect),
-  // Jangan render children (agar tidak error akses property user)
+  // Render null sebentar jika user kosong tapi token ada (kena safety check)
   if (!user) {
     return null; 
   }
 
-  // 3. User Valid -> Render Halaman
   return (
     <div className="flex flex-col min-h-screen bg-gray-50">
-        {/* Main Content */}
         <main className="flex-grow">
           {children}
         </main>
