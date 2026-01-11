@@ -2,168 +2,215 @@
 
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
-import axios from '@/lib/axios';
+import axios from '../lib/axios';
 
-// ============================================
-// TYPES - Simple, hanya yang dibutuhkan
-// ============================================
+// --- TIPE DATA ---
+interface Province { id: string; name: string; }
+interface Regency { id: string; name: string; }
+interface Role { id: number; name: string; }
+interface JenisDlh { id: number; name: string; }
+
 export interface User {
   id: number;
+  name: string;
   email: string;
-  dinas_id?: number;
-  role: {
-    name: string; // 'admin' | 'pusdatin' | 'provinsi' | 'kabupaten/kota'
-  };
-  token?: string;
+  role_id: number;
+  jenis_dlh_id?: number;
+  role: Role;
+  jenis_dlh?: JenisDlh;
+  nomor_telepon?: string;
+  province_id?: string;
+  regency_id?: string;
+  province_name?: string;
+  regency_name?: string;
+  pesisir?: string;
+}
+
+interface LoginCredentials {
+  email: string;
+  password: string;
+}
+
+interface RegisterData {
+  name: string;
+  email: string;
+  nomor_telepon: string;
+  password: string;
+  password_confirmation: string;
+  role_id: number;
+  jenis_dlh_id: number;
+  province_id: string;
+  regency_id?: string;
+  pesisir: string;
 }
 
 interface AuthContextType {
   user: User | null;
   isLoading: boolean;
-  login: (email: string, password: string) => Promise<void>;
-  logout: () => void;
-  getRole: () => string | null;
+  provinces: Province[];
+  regencies: Regency[];
+  jenisDlhs: JenisDlh[];
+  login: (credentials: LoginCredentials) => Promise<void>;
+  register: (data: RegisterData) => Promise<void>;
+  logout: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-// ============================================
-// HELPER - Get dashboard path by role
-// ============================================
-function getDashboardByRole(role: string): string {
-  switch (role.toLowerCase()) {
-    case 'admin':
-      return '/admin-dashboard';
-    case 'pusdatin':
-      return '/pusdatin-dashboard';
-    case 'provinsi':
-    case 'kabupaten/kota':
-      return '/dlh-dashboard';
-    default:
-      return '/';
-  }
-}
+// --- MOCK DATA ---
+const MOCK_PROVINCES: Province[] = [
+  { id: '1', name: 'Jawa Barat' },
+  { id: '2', name: 'Jawa Tengah' },
+  { id: '3', name: 'Jawa Timur' },
+  { id: '4', name: 'DI Yogyakarta' },
+];
 
-// ============================================
-// PROVIDER
-// ============================================
-export function AuthProvider({ children }: { children: ReactNode }) {
+export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const router = useRouter();
+  // Hapus 'pathname' karena tidak digunakan
+  
+  // State Utama
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  
+  // Data Wilayah
+  const [provinces, setProvinces] = useState<Province[]>([]);
+  // Hapus setter yang belum dipakai agar ESLint senang
+  const [regencies] = useState<Regency[]>([]); 
+  const [jenisDlhs] = useState<JenisDlh[]>([]);
 
-  // Load user from localStorage on mount
+  // --- 1. CEK USER SAAT RELOAD (REHYDRATION) ---
   useEffect(() => {
-    const token = localStorage.getItem('auth_token');
-    const savedUser = localStorage.getItem('user_data');
-    
-    if (token && savedUser) {
-      try {
-        const parsed = JSON.parse(savedUser);
-        setUser(parsed);
-      } catch {
-        // Invalid data, clear it
-        localStorage.removeItem('auth_token');
-        localStorage.removeItem('user_data');
+    const rehydrateUser = () => {
+      const token = localStorage.getItem('auth_token');
+      const cached = localStorage.getItem('user_data');
+      
+      if (token && cached) {
+        try {
+          const userData = JSON.parse(cached);
+          setUser(userData);
+          console.log('✅ Auth Restored:', userData.email);
+        } catch (e) {
+          console.error('❌ Cache Corrupt:', e);
+          localStorage.removeItem('user_data');
+          localStorage.removeItem('auth_token');
+        }
       }
-    }
-    setIsLoading(false);
+      setIsLoading(false);
+    };
+
+    rehydrateUser();
   }, []);
 
-  // Login function - simple and direct
-  const login = async (email: string, password: string): Promise<void> => {
-    const response = await axios.post('/api/login', { email, password });
+  // --- 2. FETCH DATA PENDUKUNG ---
+  useEffect(() => {
+    if (isLoading) return;
+
+    const initData = async () => {
+        try {
+             const res = await axios.get('/api/wilayah/provinces');
+             setProvinces(res.data.data || res.data || MOCK_PROVINCES);
+        } catch { 
+             // Hapus variable 'error' di catch karena tidak dipakai
+             if (process.env.NODE_ENV === 'development') setProvinces(MOCK_PROVINCES);
+        }
+    };
     
-    const userData: User = response.data.user;
-    const token = userData.token;
-    
-    if (!token) {
-      throw new Error('No token received');
+    initData();
+  }, [isLoading]);
+
+  // --- ACTIONS ---
+
+  const login = async (credentials: LoginCredentials) => {
+    setIsLoading(true);
+    try {
+      localStorage.removeItem('auth_token');
+      localStorage.removeItem('user_data');
+      
+      const response = await axios.post('/api/login', credentials);
+      
+      const token = response.data.user.token;
+      const userData = response.data.user;
+      
+      localStorage.setItem('auth_token', token);
+      localStorage.setItem('user_data', JSON.stringify(userData));
+      setUser(userData);
+
+      const roleName = userData?.role?.name?.toLowerCase();
+      console.log('🔐 Login Success. Redirecting role:', roleName);
+      
+      if (roleName === 'admin') router.push('/admin-dashboard');
+      else if (roleName === 'pusdatin') router.push('/pusdatin-dashboard');
+      else if (roleName === 'provinsi' || roleName === 'kabupaten/kota') router.push('/dlh-dashboard');
+      else router.push('/');
+      
+    } catch (error) {
+      console.error("Login failed:", error);
+      throw error;
+    } finally {
+      setIsLoading(false);
     }
-    
-    // Save to localStorage
-    localStorage.setItem('auth_token', token);
-    localStorage.setItem('user_data', JSON.stringify(userData));
-    
-    // Update state
-    setUser(userData);
-    
-    // Redirect based on role
-    const role = userData.role?.name || '';
-    const dashboard = getDashboardByRole(role);
-    router.push(dashboard);
   };
 
-  // Logout - clear everything
-  const logout = () => {
-    localStorage.removeItem('auth_token');
-    localStorage.removeItem('user_data');
-    setUser(null);
-    router.push('/');
+  const register = async (data: RegisterData) => {
+    setIsLoading(true);
+    try {
+      // FIX: Sesuaikan rute dengan routes/api.php lu (tanpa prefix /auth/)
+      const response = await axios.post('/api/register', data);
+      const token = response.data.token;
+      const userData = response.data.user;
+      
+      localStorage.setItem('auth_token', token);
+      localStorage.setItem('user_data', JSON.stringify(userData));
+      setUser(userData);
+      
+      const roleName = userData.role.name.toLowerCase();
+      if (roleName === 'admin') router.push('/admin-dashboard');
+      else if (roleName === 'pusdatin') router.push('/pusdatin-dashboard');
+      else if (roleName === 'provinsi' || roleName === 'kabupaten/kota') router.push('/dlh-dashboard');
+      else router.push('/');
+
+    } catch (error) {
+      console.error("Register failed:", error);
+      throw error;
+    } finally {
+      setIsLoading(false);
+    }
   };
 
-  // Get role helper
-  const getRole = (): string | null => {
-    return user?.role?.name?.toLowerCase() || null;
+  const logout = async () => {
+    setIsLoading(true);
+    try {
+      await axios.post('/api/logout');
+    } catch {
+      // Hapus variable 'e' di catch karena tidak dipakai
+      console.warn("Logout API error, forcing local logout");
+    } finally {
+      localStorage.clear();
+      setUser(null);
+      router.push('/login');
+      setIsLoading(false);
+    }
   };
 
   return (
-    <AuthContext.Provider value={{ user, isLoading, login, logout, getRole }}>
+    <AuthContext.Provider value={{ 
+        user, 
+        isLoading, 
+        provinces, 
+        regencies, 
+        jenisDlhs, 
+        login, 
+        register, 
+        logout 
+    }}> 
       {children}
     </AuthContext.Provider>
   );
-}
+};
 
-// ============================================
-// HOOK
-// ============================================
-export function useAuth() {
+export const useAuth = () => {
   const context = useContext(AuthContext);
-  if (!context) {
-    throw new Error('useAuth must be used within AuthProvider');
-  }
+  if (!context) throw new Error('useAuth must be used within an AuthContext');
   return context;
-}
-
-// ============================================
-// ROLE GUARD - Higher order component
-// ============================================
-export function withRoleGuard(allowedRoles: string[]) {
-  return function RoleGuard({ children }: { children: ReactNode }) {
-    const { user, isLoading, getRole } = useAuth();
-    const router = useRouter();
-    const [checked, setChecked] = useState(false);
-
-    useEffect(() => {
-      if (isLoading) return;
-
-      const token = localStorage.getItem('auth_token');
-      
-      // No token = go to login
-      if (!token) {
-        router.push('/');
-        return;
-      }
-
-      const role = getRole();
-      
-      // Wrong role = redirect to correct dashboard
-      if (role && !allowedRoles.includes(role)) {
-        router.push(getDashboardByRole(role));
-        return;
-      }
-
-      setChecked(true);
-    }, [isLoading, user, router, getRole]);
-
-    if (isLoading || !checked) {
-      return (
-        <div className="flex items-center justify-center min-h-screen">
-          <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
-        </div>
-      );
-    }
-
-    return <>{children}</>;
-  };
-}
+};
