@@ -1,19 +1,31 @@
-// app/some-page/page.tsx
-import UnderConstructionModal from "@/components/UnderConstructionModal";
+'use client';
 
-export default function Page() {
+import { useState } from 'react';
+import { useRouter } from 'next/navigation';
+// Pastikan import path ini sesuai dengan struktur project Anda
+import UnderConstructionModal from '@/components/UnderConstructionModal'; 
+
+export default function DetailPengirimanPage() {
+  const router = useRouter();
+  const [isOpen, setIsOpen] = useState(true);
+
+  const handleClose = () => {
+    setIsOpen(false);
+    router.back(); // Kembali ke halaman sebelumnya saat modal ditutup
+  };
+
   return (
-    <>
-      <div className="p-10">
-        {/* Konten halaman boleh ada di sini */}
-        <h1 className="text-xl font-bold">Under Construction</h1>
-      </div>
-
-      {/* Modal muncul otomatis */}
+    <div className="p-6">
+      {/* Konten dummy di background (opsional) */}
+      <h1 className="text-2xl font-bold text-gray-800 mb-4">Detail Pengiriman Data</h1>
+      
+      {/* Modal Under Construction */}
       <UnderConstructionModal
+        isOpen={isOpen}
+        onClose={handleClose}
         title="Sedang Dalam Pengembangan"
-        message="Fitur ini belum tersedia saat ini."
+        message="Fitur detail pengiriman data ini belum tersedia saat ini. Mohon kembali lagi nanti."
       />
-    </>
+    </div>
   );
 }
