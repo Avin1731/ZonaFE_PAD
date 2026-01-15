@@ -13,7 +13,7 @@ const rincianSkorStats = [
 export default function TabWawancara() {
   return (
     <div className="space-y-6 animate-fade-in">
-    <h3 className="font-bold text-gray-800 mb-4">Penilaian Wawancara & Perhitungan Nirwasita Tantra Final</h3>
+      <h3 className="font-bold text-gray-800 mb-4">Penilaian Wawancara & Perhitungan Nirwasita Tantra Final</h3>
 
       {/* Filter Wawancara */}
       <div className="flex gap-4 mb-6">
@@ -91,18 +91,18 @@ export default function TabWawancara() {
         <div className="mt-8">
           <h4 className="text-sm font-bold text-gray-800 mb-3">Rincian Skor per Tahap</h4>
           
-          {/* FIX GRID BAWAH: Gunakan lg:grid-cols-5 untuk layar besar */}
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
             {rincianSkorStats.map((stat, index) => (
               <StatCard
                 key={index}
                 title={stat.title}
                 value={stat.value}
-                // Warna Hijau untuk semua 5 kartu
-                bgColor="bg-green-50"
-                borderColor="border-green-300"
-                titleColor="text-green-600"
-                valueColor="text-green-800"
+                // Updated Props untuk StatCard versi baru
+                type="custom"
+                customBg="bg-green-50"
+                customBorder="border-green-300"
+                customTitleColor="text-green-600"
+                customValueColor="text-green-800"
               />
             ))}
           </div>

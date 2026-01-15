@@ -1,12 +1,6 @@
 'use client';
 
 import { HasilPenilaian } from './HasilPenilaianModal';
-import {
-  CheckCircle,
-  Clock,
-  XCircle,
-  AlertCircle,
-} from 'lucide-react';
 
 interface HasilPenilaianCardProps {
   hasil: HasilPenilaian | null;
