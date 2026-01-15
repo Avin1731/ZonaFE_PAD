@@ -1,390 +1,383 @@
 'use client';
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import { User } from '@/context/AuthContext';
 import InnerNav from '@/components/InnerNav';
 import UserTable from '@/components/UserTable';
 import Pagination from '@/components/Pagination';
-import Link from 'next/link';
 import axios from '@/lib/axios';
-import { FiSearch } from 'react-icons/fi'; 
+import { FiSearch, FiRefreshCw, FiUserCheck, FiUsers, FiShield } from 'react-icons/fi';
 
-const USERS_PER_PAGE = 25;
 const CACHE_DURATION = 5 * 60 * 1000; // 5 menit
 
-// Cache structure
-interface CacheEntry {
-  data: any;
+// --- TYPES ---
+
+type MainTab = 'dlh' | 'pusdatin' | 'admin';
+type DlhSubTab = 'provinsi' | 'kabkota';
+
+interface UserData {
+  id: number;
+  name?: string; 
+  email: string;
+  role: { name: string } | string; 
+  dinas?: {
+    nama_dinas: string;
+    region?: {
+      type: string;
+      nama_region: string;
+      nama_wilayah?: string;
+      parent?: { nama_region: string; nama_wilayah?: string; }
+    }
+  };
+  province_name?: string;
+  regency_name?: string;
+}
+
+interface PaginatedResponse {
+  data: UserData[];
+  total: number;
+  last_page: number;
+  current_page: number;
+}
+
+interface CacheEntry<T> {
+  data: T;
   timestamp: number;
 }
 
-const dataCache: Record<string, CacheEntry> = {};
+interface ProgressStatCardProps {
+  title: string;
+  current: number;
+  max: number;
+  color?: 'blue' | 'green' | 'red';
+  icon?: React.ElementType; 
+  onClick?: () => void;
+}
 
-// 🎨 Warna per-card untuk StatCard biasa
-const statCardColors = [
-  { bg: 'bg-blue-50', border: 'border-blue-300', titleColor: 'text-blue-600', valueColor: 'text-blue-800' },
-  { bg: 'bg-blue-50', border: 'border-blue-300', titleColor: 'text-blue-600', valueColor: 'text-blue-800' },
-  { bg: 'bg-green-50', border: 'border-green-300', titleColor: 'text-green-600', valueColor: 'text-green-800' },
-  { bg: 'bg-red-50', border: 'border-red-300', titleColor: 'text-red-600', valueColor: 'text-red-800' },
-];
+// Global Cache
+const dataCache: Record<string, CacheEntry<unknown>> = {};
 
-// Komponen StatCard dengan Progress Bar
-const ProgressStatCard = ({ title, current, max, color = 'green' }: { title: string; current: number; max: number; color?: 'blue' | 'green' | 'red' }) => {
-  const percentage = Math.min(100, (current / max) * 100);
-  const colorClasses = {
-    blue: { bar: 'bg-blue-500', border: 'border-blue-300', text: 'text-blue-600' },
-    green: { bar: 'bg-green-500', border: 'border-green-300', text: 'text-green-600' },
-    red: { bar: 'bg-red-500', border: 'border-red-300', text: 'text-red-600' },
+// --- COMPONENTS ---
+
+const ProgressStatCard = ({ 
+  title, current, max, color = 'green', icon: Icon, onClick 
+}: ProgressStatCardProps) => {
+  const percentage = max > 0 ? Math.min(100, (current / max) * 100) : 0;
+  
+  const styles = {
+    blue: { bar: 'bg-blue-500', border: 'border-l-blue-500', text: 'text-blue-600', bgIcon: 'bg-blue-50' },
+    green: { bar: 'bg-green-500', border: 'border-l-green-500', text: 'text-green-600', bgIcon: 'bg-green-50' },
+    red: { bar: 'bg-red-500', border: 'border-l-red-500', text: 'text-red-600', bgIcon: 'bg-red-50' },
   };
 
-  const selectedColors = colorClasses[color];
+  const s = styles[color];
 
   return (
-    <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 h-full flex flex-col">
-      <div>
-        <h3 className="text-sm font-medium text-gray-600 mb-1">{title}</h3>
-        <p className="text-3xl font-bold text-gray-900">{current} / {max}</p>
-      </div>
-      <div className="mt-auto">
-        <div className="mt-3 w-full bg-gray-200 rounded-full h-2.5">
-          <div
-            className={`h-2.5 rounded-full ${selectedColors.bar}`}
-            style={{ width: `${percentage}%` }}
-          ></div>
+    <div 
+      onClick={onClick}
+      className={`bg-white rounded-xl shadow-sm border border-gray-200 p-5 h-full flex flex-col cursor-pointer border-l-4 ${s.border} hover:shadow-md hover:-translate-y-1 transition-all duration-200 group`}
+    >
+      <div className="flex justify-between items-start mb-2">
+        <div>
+          <h3 className="text-sm font-medium text-gray-500">{title}</h3>
+          <p className="text-2xl font-bold text-gray-900 mt-1">
+            {current.toLocaleString()} 
+            {max > 0 && <span className="text-sm text-gray-400 font-normal ml-1">/ {max}</span>}
+          </p>
         </div>
+        {Icon && <div className={`p-2 rounded-lg ${s.bgIcon} ${s.text} group-hover:scale-110 transition-transform`}><Icon className="w-5 h-5" /></div>}
       </div>
+      
+      {max > 0 && (
+        <div className="mt-auto pt-2">
+          <div className="w-full bg-gray-100 rounded-full h-1.5 overflow-hidden">
+            <div className={`h-1.5 rounded-full ${s.bar}`} style={{ width: `${percentage}%` }}></div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
 
+// --- MAIN PAGE ---
+
 export default function UsersAktifPage() {
   const [currentPage, setCurrentPage] = useState(1);
   const [loading, setLoading] = useState<Record<string, boolean>>({});
+  const [refreshKey, setRefreshKey] = useState(0);
   
-  // Tab state
-  const [activeTab, setActiveTab] = useState('dlh');
-  const [activeDlhTab, setActiveDlhTab] = useState('provinsi');
-  
-  // Search state
+  const [activeTab, setActiveTab] = useState<MainTab>('dlh');
+  const [activeDlhTab, setActiveDlhTab] = useState<DlhSubTab>('provinsi');
   const [searchTerm, setSearchTerm] = useState('');
 
-  // Data per role
-  const [dlhProvData, setDlhProvData] = useState<any>(null);
-  const [dlhKabData, setDlhKabData] = useState<any>(null);
-  const [pusdatinData, setPusdatinData] = useState<any>(null);
+  const [dlhProvData, setDlhProvData] = useState<PaginatedResponse | null>(null);
+  const [dlhKabData, setDlhKabData] = useState<PaginatedResponse | null>(null);
+  const [pusdatinData, setPusdatinData] = useState<PaginatedResponse | null>(null);
+  const [adminData, setAdminData] = useState<PaginatedResponse | null>(null);
 
-  // Stats
   const [stats, setStats] = useState({
     dlhProvinsi: 0,
     dlhKabKota: 0,
     pusdatin: 0,
+    admin: 0,
   });
 
-  // Helper: Check cache validity
-  const isCacheValid = (key: string): boolean => {
-    if (!dataCache[key]) return false;
-    const age = Date.now() - dataCache[key].timestamp;
-    return age < CACHE_DURATION;
-  };
+  const getEndpointConfig = useCallback((tab: string, dlhSubTab: string, page: number) => {
+    if (tab === 'dlh') {
+      if (dlhSubTab === 'provinsi') return { url: `/api/admin/provinsi/1?page=${page}`, key: `prov-${page}` };
+      return { url: `/api/admin/kabupaten/1?page=${page}`, key: `kab-${page}` };
+    }
+    if (tab === 'pusdatin') return { url: `/api/admin/pusdatin/1?page=${page}`, key: `pus-${page}` };
+    if (tab === 'admin') return { url: `/api/admin/admin/1?page=${page}`, key: `adm-${page}` };
+    return { url: '', key: '' };
+  }, []);
 
-  // Helper: Fetch dengan cache
-  const fetchWithCache = useCallback(async (endpoint: string, cacheKey: string) => {
-    // Check cache first
-    if (isCacheValid(cacheKey)) {
-      console.log(`Using cached data for ${cacheKey}`);
-      return dataCache[cacheKey].data;
+  const fetchWithCache = useCallback(async <T,>(endpoint: string, cacheKey: string, forceRefresh = false) => {
+    if (!forceRefresh && dataCache[cacheKey]) {
+      const age = Date.now() - dataCache[cacheKey].timestamp;
+      if (age < CACHE_DURATION) return dataCache[cacheKey].data as T;
     }
 
-    // Fetch dari API
     setLoading(prev => ({ ...prev, [cacheKey]: true }));
     try {
       const res = await axios.get(endpoint);
       const data = res.data;
+      // Normalisasi format response (array vs object)
+      const formattedData = Array.isArray(data) ? { data, total: data.length, last_page: 1, current_page: 1 } : data;
       
-      // Store in cache
-      dataCache[cacheKey] = {
-        data,
-        timestamp: Date.now()
-      };
-      
-      return data;
+      dataCache[cacheKey] = { data: formattedData, timestamp: Date.now() };
+      return formattedData as T;
     } catch (e) {
-      console.error(`Gagal fetch ${endpoint}:`, e);
+      console.error(`❌ Gagal fetch ${endpoint}`, e);
       return null;
     } finally {
       setLoading(prev => ({ ...prev, [cacheKey]: false }));
     }
   }, []);
 
-  // Fetch stats untuk semua role di awal (untuk preview angka)
+  // 1. Fetch Statistik
   useEffect(() => {
-    const fetchAllStats = async () => {
-      // Fetch semua stats secara parallel untuk preview
-      const [provData, kabData, pusdatinDataRes] = await Promise.all([
-        fetchWithCache('/api/admin/provinsi/1?per_page=1', 'dlh-prov-stats'),
-        fetchWithCache('/api/admin/kabupaten/1?per_page=1', 'dlh-kab-stats'),
-        fetchWithCache('/api/admin/pusdatin/1?per_page=1', 'pusdatin-stats'),
+    const fetchStats = async () => {
+      const [prov, kab, pus, adm] = await Promise.all([
+        fetchWithCache<PaginatedResponse>('/api/admin/provinsi/1?per_page=1', 'stat-prov', refreshKey > 0),
+        fetchWithCache<PaginatedResponse>('/api/admin/kabupaten/1?per_page=1', 'stat-kab', refreshKey > 0),
+        fetchWithCache<PaginatedResponse>('/api/admin/pusdatin/1?per_page=1', 'stat-pus', refreshKey > 0),
+        fetchWithCache<PaginatedResponse>('/api/admin/admin/1?per_page=1', 'stat-adm', refreshKey > 0),
       ]);
 
       setStats({
-        dlhProvinsi: provData?.total || 0,
-        dlhKabKota: kabData?.total || 0,
-        pusdatin: pusdatinDataRes?.total || 0,
+        dlhProvinsi: prov?.total || 0,
+        dlhKabKota: kab?.total || 0,
+        pusdatin: pus?.total || 0,
+        admin: adm?.total || 0,
       });
     };
+    fetchStats();
+  }, [fetchWithCache, refreshKey]);
 
-    fetchAllStats();
-  }, [fetchWithCache]);
-
-  // Fetch data berdasarkan tab yang aktif
+  // 2. Fetch Data Tabel
   useEffect(() => {
-    const fetchData = async () => {
-      if (activeTab === 'dlh') {
-        // Fetch DLH Provinsi
-        if (activeDlhTab === 'provinsi' && !dlhProvData) {
-          const data = await fetchWithCache('/api/admin/provinsi/1', 'dlh-prov');
-          if (data) {
-            setDlhProvData(data);
-          }
-        }
-        // Fetch DLH Kab/Kota
-        if (activeDlhTab === 'kabkota' && !dlhKabData) {
-          const data = await fetchWithCache('/api/admin/kabupaten/1', 'dlh-kab');
-          if (data) {
-            setDlhKabData(data);
-          }
-        }
-      } else if (activeTab === 'pusdatin' && !pusdatinData) {
-        const data = await fetchWithCache('/api/admin/pusdatin/1', 'pusdatin');
-        if (data) {
+    const loadData = async () => {
+      const { url, key } = getEndpointConfig(activeTab, activeDlhTab, currentPage);
+      if (!url) return;
+
+      const data = await fetchWithCache<PaginatedResponse>(url, key, refreshKey > 0);
+      
+      if (data) {
+        if (activeTab === 'dlh') {
+          if (activeDlhTab === 'provinsi') setDlhProvData(data);
+          else setDlhKabData(data);
+        } else if (activeTab === 'pusdatin') {
           setPusdatinData(data);
+        } else if (activeTab === 'admin') {
+          setAdminData(data);
         }
       }
     };
+    loadData();
+  }, [activeTab, activeDlhTab, currentPage, fetchWithCache, getEndpointConfig, refreshKey]);
 
-    fetchData();
-  }, [activeTab, activeDlhTab, dlhProvData, dlhKabData, pusdatinData, fetchWithCache]);
-
-  // Get current data based on active tab
-  const getCurrentData = useMemo(() => {
-    if (activeTab === 'dlh') {
-      return activeDlhTab === 'provinsi' ? dlhProvData : dlhKabData;
-    } else if (activeTab === 'pusdatin') {
-      return pusdatinData;
-    }
-    return null;
-  }, [activeTab, activeDlhTab, dlhProvData, dlhKabData, pusdatinData]);
-
-  // Get current users from pagination data
-  const currentUsers = useMemo(() => {
-    if (!getCurrentData?.data) return [];
-    return getCurrentData.data;
-  }, [getCurrentData]);
-
-  // Filter users by search
-  const filteredUsers = useMemo(() => {
-    if (!searchTerm) return currentUsers;
-    
-    const lowerTerm = searchTerm.toLowerCase();
-    return currentUsers.filter((user: any) => 
-      user.name?.toLowerCase().includes(lowerTerm) || 
-      user.email?.toLowerCase().includes(lowerTerm) ||
-      user.dinas?.nama_dinas?.toLowerCase().includes(lowerTerm)
-    );
-  }, [currentUsers, searchTerm]);
-
-  // Total pages dari API atau dari filtered
-  const totalPages = getCurrentData?.last_page || 1;
-
-  // Reset page ketika tab berubah
-  useEffect(() => {
+  const handleStatClick = (tab: MainTab, subTab?: DlhSubTab) => {
+    setActiveTab(tab);
+    if (subTab) setActiveDlhTab(subTab);
     setCurrentPage(1);
-    setSearchTerm(''); 
-  }, [activeTab, activeDlhTab]);
+    setSearchTerm('');
+  };
 
-  // Handle page change - fetch new data if needed
-  const handlePageChange = useCallback(async (page: number) => {
-    // Update current page immediately
-    setCurrentPage(page);
-    
-    // Fetch data untuk page baru
-    let endpoint = '';
-    let cacheKey = '';
-    
-    if (activeTab === 'dlh') {
-      if (activeDlhTab === 'provinsi') {
-        endpoint = `/api/admin/provinsi/1?page=${page}`;
-        cacheKey = `dlh-prov-${page}`;
-      } else {
-        endpoint = `/api/admin/kabupaten/1?page=${page}`;
-        cacheKey = `dlh-kab-${page}`;
-      }
-    } else if (activeTab === 'pusdatin') {
-      endpoint = `/api/admin/pusdatin/1?page=${page}`;
-      cacheKey = `pusdatin-${page}`;
-    }
+  const handleManualRefresh = () => {
+    setRefreshKey(prev => prev + 1);
+  };
 
-    if (endpoint) {
-      const data = await fetchWithCache(endpoint, cacheKey);
+  // 3. Current Data Set (Pastikan adminData direturn)
+  const currentDataSet = useMemo(() => {
+    if (activeTab === 'dlh') return activeDlhTab === 'provinsi' ? dlhProvData : dlhKabData;
+    if (activeTab === 'pusdatin') return pusdatinData;
+    if (activeTab === 'admin') return adminData;
+    return null;
+  }, [activeTab, activeDlhTab, dlhProvData, dlhKabData, pusdatinData, adminData]);
+
+  const rawUsers = useMemo(() => currentDataSet?.data || [], [currentDataSet]);
+  
+  // 4. Filtering (Handle null dinas/name untuk Admin)
+  const filteredUsers = useMemo(() => {
+    if (!searchTerm) return rawUsers;
+    const lower = searchTerm.toLowerCase();
+    
+    return rawUsers.filter(u => {
+      // Safe check menggunakan optional chaining (?.) dan fallback string kosong
+      const name = u.name ? u.name.toLowerCase() : '';
+      const email = u.email ? u.email.toLowerCase() : '';
+      const dinasName = u.dinas?.nama_dinas ? u.dinas.nama_dinas.toLowerCase() : '';
       
-      if (data) {
-        // Update state berdasarkan tab aktif
-        if (activeTab === 'dlh') {
-          if (activeDlhTab === 'provinsi') {
-            setDlhProvData(data);
-          } else {
-            setDlhKabData(data);
-          }
-        } else if (activeTab === 'pusdatin') {
-          setPusdatinData(data);
-        }
-      }
-    }
-  }, [activeTab, activeDlhTab, fetchWithCache]);
+      return name.includes(lower) || email.includes(lower) || dinasName.includes(lower);
+    });
+  }, [rawUsers, searchTerm]);
 
-  // Tabs
-  const dlhTabs = [
-    { label: 'Provinsi', value: 'provinsi' },
-    { label: 'Kab/Kota', value: 'kabkota' },
-  ];
-
-  const mainTabs = [
-    { label: 'DLH', value: 'dlh' },
-    { label: 'Pusdatin', value: 'pusdatin' },
-    // { label: 'Admin', value: 'admin' },
-  ];
-
-  const isDlhTabActive = activeTab === 'dlh';
-
-  // Stats Data
-  const statsData = [
-    { title: 'Total DLH Provinsi Aktif', value: stats.dlhProvinsi, max: 38, type: 'progress', color: 'green' as const, link: '#dlh' },
-    { title: 'Total DLH Kab/Kota Aktif', value: stats.dlhKabKota, max: 538, type: 'progress', color: 'green' as const, link: '#dlh' },
-    { title: 'Total Pusdatin Aktif', value: stats.pusdatin, type: 'simple', color: 'green' as const, link: '#pusdatin' },
-  ];
-
-  const isLoading = loading['dlh-prov'] || loading['dlh-kab'] || loading['pusdatin'];
+  const isTableLoading = loading[getEndpointConfig(activeTab, activeDlhTab, currentPage).key];
 
   return (
-    <div className="p-8 space-y-8">
+    <div className="p-8 space-y-8 min-h-screen bg-gray-50">
+      
       {/* Header */}
-      <header>
-        <h1 className="text-3xl font-extrabold text-green-800">Manajemen Pengguna Aktif</h1>
-        <p className="text-gray-600">Daftar pengguna yang telah diverifikasi dan aktif di sistem.</p>
+      <header className="flex flex-col md:flex-row md:justify-between md:items-center gap-4">
+        <div>
+          <h1 className="text-3xl font-extrabold text-gray-800 tracking-tight">Manajemen Pengguna Aktif</h1>
+          <p className="text-gray-500 mt-1">Kelola data pengguna yang terdaftar dan aktif dalam sistem.</p>
+        </div>
+        <button 
+          onClick={handleManualRefresh}
+          className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 text-gray-600 rounded-lg shadow-sm hover:text-green-600 hover:border-green-200 transition-all"
+        >
+          <FiRefreshCw className={isTableLoading ? 'animate-spin' : ''} />
+          <span className="text-sm font-medium">Refresh Data</span>
+        </button>
       </header>
 
-      {/* Statistik */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6 items-stretch">
-        {statsData.map((stat, index) => (
-          <Link
-            key={index}
-            href={stat.link}
-            onClick={(e) => {
-              e.preventDefault();
-              if (stat.link === '#dlh') {
-                setActiveTab('dlh');
-                setActiveDlhTab(stat.title.includes('Provinsi') ? 'provinsi' : 'kabkota');
-              } else if (stat.link === '#pusdatin') {
-                setActiveTab('pusdatin');
-              } else if (stat.link === '#admin') {
-                setActiveTab('admin');
-              }
-            }}
-            className="h-full block transition-transform hover:scale-105"
-          >
-            {stat.type === 'progress' ? (
-              <ProgressStatCard
-                title={stat.title}
-                current={stat.value ?? 0}
-                max={stat.max ?? 0}
-                color={stat.color}
-              />
-            ) : (
-              <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 h-full flex flex-col justify-center">
-                <h3 className="text-sm font-medium text-gray-600 mb-1">{stat.title}</h3>
-                <p className="text-3xl font-bold text-gray-900">{stat.value}</p>
-              </div>
-            )}
-          </Link>
-        ))}
+      {/* Stats Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <ProgressStatCard 
+          title="DLH Provinsi" current={stats.dlhProvinsi} max={38} color="blue" icon={FiUsers}
+          onClick={() => handleStatClick('dlh', 'provinsi')}
+        />
+        <ProgressStatCard 
+          title="DLH Kab/Kota" current={stats.dlhKabKota} max={514} color="blue" icon={FiUsers}
+          onClick={() => handleStatClick('dlh', 'kabkota')}
+        />
+        <ProgressStatCard 
+          title="Pusdatin" current={stats.pusdatin} max={0} color="green" icon={FiUserCheck}
+          onClick={() => handleStatClick('pusdatin')}
+        />
+        <ProgressStatCard 
+          title="Admin System" current={stats.admin} max={0} color="red" icon={FiShield}
+          onClick={() => handleStatClick('admin')}
+        />
       </div>
 
-      {/* Main Tabs */}
-      <InnerNav tabs={mainTabs} activeTab={activeTab} onChange={setActiveTab} />
-
-      {/* DLH Sub Tabs */}
-      {activeTab === 'dlh' && (
-        <InnerNav
-          tabs={dlhTabs}
-          activeTab={activeDlhTab}
-          onChange={setActiveDlhTab}
-          className="mt-0"
+      {/* Navigation Tabs */}
+      <div className="space-y-4">
+        <InnerNav 
+          tabs={[
+            { label: 'Dinas Lingkungan Hidup', value: 'dlh' },
+            { label: 'Tim Pusdatin', value: 'pusdatin' },
+            { label: 'Admin System', value: 'admin' }, 
+          ]} 
+          activeTab={activeTab} 
+          onChange={(val) => { setActiveTab(val as MainTab); setCurrentPage(1); }} 
         />
-      )}
+        
+        {activeTab === 'dlh' && (
+          <InnerNav 
+            tabs={[
+              { label: 'Tingkat Provinsi', value: 'provinsi' },
+              { label: 'Tingkat Kab/Kota', value: 'kabkota' },
+            ]} 
+            activeTab={activeDlhTab} 
+            onChange={(val) => { setActiveDlhTab(val as DlhSubTab); setCurrentPage(1); }} 
+            className="mt-2"
+          />
+        )}
+      </div>
 
-      {/* --- SEARCH BAR --- */}
-      <div className="flex items-center mb-4">
-        <div className="relative flex-1 max-w-md">
-          <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-            <FiSearch className="text-gray-400" />
-          </div>
+      {/* Toolbar & Search */}
+      <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-200 flex flex-col sm:flex-row justify-between items-center gap-4">
+        <div className="relative w-full sm:max-w-md">
+          <FiSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
           <input
             type="text"
-            placeholder={`Cari nama atau email ${activeTab === 'dlh' ? (activeDlhTab === 'provinsi' ? 'DLH Provinsi' : 'DLH Kab/Kota') : activeTab}...`}
-            className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 transition-all outline-none"
+            placeholder={`Cari nama, email, atau instansi...`}
+            className="w-full pl-10 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-lg focus:bg-white focus:ring-2 focus:ring-green-500 focus:border-green-500 transition-all outline-none text-sm"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
           />
         </div>
       </div>
 
-      {/* Loading State */}
-      {isLoading && (
-        <div className="flex justify-center items-center py-12">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-600"></div>
+      {/* Table Content */}
+      {isTableLoading ? (
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 space-y-4">
+          {[1, 2, 3, 4, 5].map(i => (
+             <div key={i} className="flex items-center gap-4 animate-pulse">
+               <div className="w-10 h-10 bg-gray-200 rounded-full"></div>
+               <div className="flex-1 space-y-2">
+                 <div className="h-4 bg-gray-200 rounded w-3/4"></div>
+                 <div className="h-3 bg-gray-200 rounded w-1/2"></div>
+               </div>
+             </div>
+          ))}
         </div>
-      )}
-
-      {/* Tabel User */}
-      {!isLoading && (
+      ) : (
         <>
           <UserTable
-            users={filteredUsers.map((u: any) => ({
+            users={filteredUsers.map((u) => ({
               id: u.id,
-              name: u.name || u.email,
+              name: u.name || u.email, // Fallback ke email jika name kosong (seperti Admin)
               email: u.email,
-              role: u.role ?? (activeTab === 'dlh' ? 'DLH' : 'Pusdatin'),
-              jenis_dlh: activeDlhTab === 'provinsi' ? 'DLH Provinsi' : 'DLH Kab-Kota',
+              // Logic role fallback yang aman
+              role: (typeof u.role === 'string' ? u.role : u.role?.name) || 
+                    (activeTab === 'admin' ? 'Admin' : activeTab === 'pusdatin' ? 'Pusdatin' : 'DLH'),
+              jenis_dlh: activeTab === 'dlh' ? (activeDlhTab === 'provinsi' ? 'DLH Provinsi' : 'DLH Kab-Kota') : '-',
               status: 'aktif',
-              province: u.province_name ?? '-',
-              regency: u.regency_name ?? '-',
+              // Logic lokasi yang aman dari undefined
+              province: u.province_name || '-',
+              regency: u.regency_name || '-',
             }))}
-            showLocation={isDlhTabActive}
-            showDlhSpecificColumns={isDlhTabActive}
+            showLocation={activeTab === 'dlh'}
+            showDlhSpecificColumns={activeTab === 'dlh'}
           />
 
           {/* Pagination */}
-          <div className="flex justify-between items-center mt-6">
-            <span className="text-sm text-gray-600">
-              Menampilkan {filteredUsers.length} dari {getCurrentData?.total || 0} pengguna
-            </span>
-
-            <Pagination
-              currentPage={currentPage}
-              totalPages={totalPages}
-              onPageChange={handlePageChange}
-              siblings={1}
-            />
-          </div>
+          {currentDataSet && currentDataSet.total > 0 && (
+            <div className="flex flex-col sm:flex-row justify-between items-center gap-4 bg-white p-4 rounded-lg border border-gray-200 shadow-sm">
+              <span className="text-sm text-gray-500 font-medium">
+                  Menampilkan <span className="text-gray-900 font-bold">{filteredUsers.length}</span> dari <span className="text-gray-900 font-bold">{currentDataSet.total}</span> data
+              </span>
+              
+              <Pagination
+                currentPage={currentPage}
+                totalPages={currentDataSet.last_page || 1}
+                onPageChange={setCurrentPage}
+                siblings={1}
+              />
+            </div>
+          )}
         </>
       )}
 
       {/* Empty State */}
-      {!isLoading && filteredUsers.length === 0 && (
-        <div className="text-center py-12">
-          <p className="text-gray-500">Tidak ada data pengguna</p>
-        </div>
+      {!isTableLoading && filteredUsers.length === 0 && (
+         <div className="flex flex-col items-center justify-center py-16 bg-white rounded-xl border border-gray-200 border-dashed">
+           <div className="bg-gray-50 p-4 rounded-full mb-3">
+             <FiSearch className="w-8 h-8 text-gray-400" />
+           </div>
+           <p className="text-gray-900 font-medium">Data tidak ditemukan</p>
+           <p className="text-gray-500 text-sm mt-1">Coba kata kunci lain atau tab kategori berbeda.</p>
+           {searchTerm && (
+             <button onClick={() => setSearchTerm('')} className="mt-4 text-green-600 hover:text-green-700 text-sm font-semibold">
+               Reset Pencarian
+             </button>
+           )}
+         </div>
       )}
+
     </div>
   );
 }

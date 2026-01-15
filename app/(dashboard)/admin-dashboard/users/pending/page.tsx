@@ -3,25 +3,16 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import StatCard from '@/components/StatCard';
 import InnerNav from '@/components/InnerNav';
-import UserTable from '@/components/UserTable';
+import UserTable, { UserTableRow } from '@/components/UserTable';
 import Pagination from '@/components/Pagination';
 import UniversalModal from '@/components/UniversalModal';
 import axios from '@/lib/axios';
-import Link from 'next/link';
-import { FiSearch } from 'react-icons/fi';
+import { FiSearch, FiClock, FiAlertCircle } from 'react-icons/fi';
 
-const CACHE_DURATION = 5 * 60 * 1000; // 5 menit
-
-interface CacheEntry {
-  data: any;
-  timestamp: number;
-}
-
-const dataCache: Record<string, CacheEntry> = {};
-
+// Warna StatCard untuk Pending (Nuansa Kuning/Orange)
 const statCardColors = [
-  { bg: 'bg-gray-50', border: 'border-yellow-300', titleColor: 'text-yellow-600', valueColor: 'text-yellow-800' },
-  { bg: 'bg-gray-50', border: 'border-yellow-300', titleColor: 'text-yellow-600', valueColor: 'text-yellow-800' },
+  { bg: 'bg-orange-50', border: 'border-orange-200', titleColor: 'text-orange-700', valueColor: 'text-orange-900' },
+  { bg: 'bg-yellow-50', border: 'border-yellow-200', titleColor: 'text-yellow-700', valueColor: 'text-yellow-900' },
 ];
 
 const INITIAL_MODAL_CONFIG = {
@@ -33,188 +24,138 @@ const INITIAL_MODAL_CONFIG = {
   onConfirm: () => {},
 };
 
-// Helper function untuk logging
-const logActivity = async (action: string, description: string) => {
-  try {
-    await axios.post('/api/logs', {
-      action,
-      description,
-      role: 'admin',
-    });
-  } catch (error) {
-    console.error('Gagal mencatat log:', error);
-  }
-};
+// Interface Data User dari API
+interface ApiUserData {
+  id: number;
+  name: string;
+  email: string;
+  role: string;
+  province_name?: string;
+  regency_name?: string;
+  dinas?: { nama_dinas: string };
+}
+
+// Interface Response Pagination
+interface PaginatedResponse {
+  data: ApiUserData[];
+  current_page: number;
+  last_page: number;
+  total: number;
+  per_page: number;
+}
+
+// Custom Error Interface
+interface ApiError {
+    response?: {
+        data?: {
+            message?: string;
+        }
+    }
+}
 
 export default function UsersPendingPage() {
-  const [currentPage, setCurrentPage] = useState(1);
-  const [loading, setLoading] = useState<Record<string, boolean>>({});
+  // State Management
   const [activeTab, setActiveTab] = useState<'provinsi' | 'kabkota'>('provinsi');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [users, setUsers] = useState<ApiUserData[]>([]);
+  const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
+  
+  // Pagination State
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalItems, setTotalItems] = useState(0);
+
+  // Action State
   const [isSubmitting, setIsSubmitting] = useState(false);
-
-  // Data per role
-  const [dlhProvData, setDlhProvData] = useState<any>(null);
-  const [dlhKabData, setDlhKabData] = useState<any>(null);
-
-  // Stats
-  const [stats, setStats] = useState({
-    dlhProvinsi: 0,
-    dlhKabKota: 0,
-  });
-
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalConfig, setModalConfig] = useState(INITIAL_MODAL_CONFIG);
 
-  // Helper: Check cache validity
-  const isCacheValid = (key: string): boolean => {
-    if (!dataCache[key]) return false;
-    const age = Date.now() - dataCache[key].timestamp;
-    return age < CACHE_DURATION;
-  };
+  // Stats State
+  const [stats, setStats] = useState({
+    dlhProvinsi: 0,
+    dlhKabKota: 0,
+    isLoaded: false
+  });
 
-  // Helper: Fetch dengan cache
-  const fetchWithCache = useCallback(async (endpoint: string, cacheKey: string) => {
-    if (isCacheValid(cacheKey)) {
-      console.log(`Using cached data for ${cacheKey}`);
-      return dataCache[cacheKey].data;
-    }
-
-    setLoading(prev => ({ ...prev, [cacheKey]: true }));
+  // --- 1. FETCH DATA (Server-Side Pagination) ---
+  const fetchData = useCallback(async (page = 1) => {
+    setLoading(true);
     try {
-      const res = await axios.get(endpoint);
-      const data = res.data;
+      // Mapping tab ke parameter API
+      // 'provinsi' -> API role 'provinsi'
+      // 'kabkota' -> API role 'kabupaten' (Backend akan convert jadi 'kabupaten/kota')
+      const roleParam = activeTab === 'provinsi' ? 'provinsi' : 'kabupaten';
       
-      dataCache[cacheKey] = {
-        data,
-        timestamp: Date.now()
-      };
+      const params = new URLSearchParams();
+      params.append('page', page.toString());
+      params.append('per_page', '10');
+      if (searchTerm) params.append('search', searchTerm);
+
+      // Endpoint: /api/admin/{role}/pending
+      const url = `/api/admin/${roleParam}/pending?${params.toString()}`;
       
-      return data;
-    } catch (e) {
-      console.error(`Gagal fetch ${endpoint}:`, e);
-      return null;
+      const res = await axios.get<PaginatedResponse>(url);
+      const responseData = res.data;
+
+      setUsers(responseData.data);
+      setCurrentPage(responseData.current_page);
+      setTotalPages(responseData.last_page);
+      setTotalItems(responseData.total);
+
+      // Update stats count secara real-time berdasarkan total dari API
+      setStats(prev => ({
+        ...prev,
+        [activeTab === 'provinsi' ? 'dlhProvinsi' : 'dlhKabKota']: responseData.total,
+        isLoaded: true
+      }));
+
+    } catch (error) {
+      console.error('Gagal mengambil data user pending:', error);
+      setUsers([]);
     } finally {
-      setLoading(prev => ({ ...prev, [cacheKey]: false }));
+      setLoading(false);
     }
-  }, []);
+  }, [activeTab, searchTerm]);
 
-  // Fetch stats untuk preview
+  // Fetch Stats Awal (Init)
   useEffect(() => {
-    const fetchAllStats = async () => {
-      const [provData, kabData] = await Promise.all([
-        fetchWithCache('/api/admin/provinsi/0?per_page=1', 'dlh-prov-pending-stats'),
-        fetchWithCache('/api/admin/kabupaten/0?per_page=1', 'dlh-kab-pending-stats'),
-      ]);
-
-      setStats({
-        dlhProvinsi: provData?.total || 0,
-        dlhKabKota: kabData?.total || 0,
-      });
+    const initStats = async () => {
+        try {
+            const [provRes, kabRes] = await Promise.all([
+                axios.get('/api/admin/provinsi/pending?per_page=1'),
+                axios.get('/api/admin/kabupaten/pending?per_page=1')
+            ]);
+            setStats({
+                dlhProvinsi: provRes.data.total,
+                dlhKabKota: kabRes.data.total,
+                isLoaded: true
+            });
+        } catch (e) { console.error("Init stats error", e); }
     };
+    if (!stats.isLoaded) initStats();
+  }, [stats.isLoaded]);
 
-    fetchAllStats();
-  }, [fetchWithCache]);
-
-  // Fetch data berdasarkan tab yang aktif
+  // Trigger fetch saat page/tab/search berubah
   useEffect(() => {
-    const fetchData = async () => {
-      if (activeTab === 'provinsi' && !dlhProvData) {
-        const data = await fetchWithCache('/api/admin/provinsi/0', 'dlh-prov-pending');
-        if (data) {
-          setDlhProvData(data);
-        }
-      } else if (activeTab === 'kabkota' && !dlhKabData) {
-        const data = await fetchWithCache('/api/admin/kabupaten/0', 'dlh-kab-pending');
-        if (data) {
-          setDlhKabData(data);
-        }
-      }
-    };
+    const timer = setTimeout(() => {
+        fetchData(currentPage);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [fetchData, currentPage]);
 
-    fetchData();
-  }, [activeTab, dlhProvData, dlhKabData, fetchWithCache]);
-
-  // Get current data based on active tab
-  const getCurrentData = useMemo(() => {
-    return activeTab === 'provinsi' ? dlhProvData : dlhKabData;
-  }, [activeTab, dlhProvData, dlhKabData]);
-
-  // Get current users from pagination data
-  const currentUsers = useMemo(() => {
-    if (!getCurrentData?.data) return [];
-    return getCurrentData.data;
-  }, [getCurrentData]);
-
-  // Filter users by search
-  const filteredUsers = useMemo(() => {
-    if (!searchTerm) return currentUsers;
-    
-    const lowerTerm = searchTerm.toLowerCase();
-    return currentUsers.filter((user: any) => 
-      user.email?.toLowerCase().includes(lowerTerm) ||
-      user.dinas?.nama_dinas?.toLowerCase().includes(lowerTerm)
-    );
-  }, [currentUsers, searchTerm]);
-
-  const totalPages = getCurrentData?.last_page || 1;
-
-  // Reset page ketika tab berubah
+  // Reset page saat ganti tab atau search
   useEffect(() => {
     setCurrentPage(1);
-    setSearchTerm('');
-  }, [activeTab]);
+  }, [activeTab, searchTerm]);
 
-  // Handle page change
-  const handlePageChange = useCallback(async (page: number) => {
-    setCurrentPage(page);
-    
-    let endpoint = '';
-    let cacheKey = '';
-    
-    if (activeTab === 'provinsi') {
-      endpoint = `/api/admin/provinsi/0?page=${page}`;
-      cacheKey = `dlh-prov-pending-${page}`;
-    } else {
-      endpoint = `/api/admin/kabupaten/0?page=${page}`;
-      cacheKey = `dlh-kab-pending-${page}`;
-    }
 
-    if (endpoint) {
-      const data = await fetchWithCache(endpoint, cacheKey);
-      
-      if (data) {
-        if (activeTab === 'provinsi') {
-          setDlhProvData(data);
-        } else {
-          setDlhKabData(data);
-        }
-      }
-    }
-  }, [activeTab, fetchWithCache]);
+  // --- 2. ACTION HANDLERS ---
 
-  const closeModal = () => {
-    setIsModalOpen(false);
-    if (isSubmitting) {
-      setIsSubmitting(false);
-    }
-  };
-
-  // Clear cache setelah action berhasil
-  const clearPendingCache = () => {
-    Object.keys(dataCache).forEach(key => {
-      if (key.includes('pending')) {
-        delete dataCache[key];
-      }
-    });
-  };
-
-  // Handle approve
   const handleApproveClick = (id: number) => {
-    const targetUser = currentUsers.find((u: any) => u.id === id);
+    const targetUser = users.find(u => u.id === id);
     setModalConfig({
       title: 'Konfirmasi Approve',
-      message: `Apakah Anda yakin ingin menyetujui akun ${targetUser?.email || 'ini'}?`,
+      message: `Apakah Anda yakin ingin menyetujui akun ${targetUser?.email}?`,
       variant: 'warning',
       confirmLabel: 'Ya, Setujui',
       showCancelButton: true,
@@ -223,12 +164,11 @@ export default function UsersPendingPage() {
     setIsModalOpen(true);
   };
 
-  // Handle reject
   const handleRejectClick = (id: number) => {
-    const targetUser = currentUsers.find((u: any) => u.id === id);
+    const targetUser = users.find(u => u.id === id);
     setModalConfig({
-      title: 'Konfirmasi Reject',
-      message: `Apakah Anda yakin ingin menolak akun ${targetUser?.email || 'ini'}? Akun akan dihapus.`,
+      title: 'Konfirmasi Tolak',
+      message: `Apakah Anda yakin ingin menolak akun ${targetUser?.email}? Akun akan dihapus permanen.`,
       variant: 'danger',
       confirmLabel: 'Ya, Tolak',
       showCancelButton: true,
@@ -237,83 +177,41 @@ export default function UsersPendingPage() {
     setIsModalOpen(true);
   };
 
-  // Perform action
   const performAction = async (action: 'approve' | 'reject', id: number) => {
-    if (!id) {
-      closeModal();
-      return;
-    }
-    
     setIsSubmitting(true);
-    setIsModalOpen(false);
-
-    const targetUser = currentUsers.find((u: any) => u.id === id);
+    setIsModalOpen(false); 
 
     try {
       if (action === 'approve') {
         await axios.patch(`/api/admin/users/approve/${id}`);
-        logActivity('Menyetujui Akun', `Menyetujui akun DLH: ${targetUser?.email || 'Unknown'}`);
-
-        setModalConfig({
-          title: 'Berhasil Approve',
-          message: 'Pengguna telah berhasil disetujui.',
-          variant: 'success',
-          confirmLabel: 'OK',
-          showCancelButton: false,
-          onConfirm: closeModal, 
-        });
       } else {
         await axios.delete(`/api/admin/users/reject/${id}`);
-        logActivity('Menolak Akun', `Menolak akun DLH: ${targetUser?.email || 'Unknown'}`);
-
-        setModalConfig({
-          title: 'Berhasil Reject',
-          message: 'Pengguna berhasil ditolak dan dihapus.',
-          variant: 'success',
-          confirmLabel: 'OK',
-          showCancelButton: false,
-          onConfirm: closeModal,
-        });
       }
 
-      // Clear cache dan refetch
-      clearPendingCache();
-      
-      // Refetch data current page
-      const endpoint = activeTab === 'provinsi' 
-        ? `/api/admin/provinsi/0?page=${currentPage}`
-        : `/api/admin/kabupaten/0?page=${currentPage}`;
-      const cacheKey = activeTab === 'provinsi' 
-        ? `dlh-prov-pending-${currentPage}`
-        : `dlh-kab-pending-${currentPage}`;
-      
-      const newData = await fetchWithCache(endpoint, cacheKey);
-      if (newData) {
-        if (activeTab === 'provinsi') {
-          setDlhProvData(newData);
-        } else {
-          setDlhKabData(newData);
-        }
-        
-        // Update stats
-        setStats(prev => ({
-          ...prev,
-          [activeTab === 'provinsi' ? 'dlhProvinsi' : 'dlhKabKota']: newData.total || 0
-        }));
-      }
-
+      // Tampilkan Modal Sukses
+      setModalConfig({
+        title: 'Berhasil',
+        message: `User berhasil ${action === 'approve' ? 'disetujui' : 'ditolak'}.`,
+        variant: 'success',
+        confirmLabel: 'OK',
+        showCancelButton: false,
+        onConfirm: () => {
+            setIsModalOpen(false);
+            fetchData(currentPage); // Refresh data table
+        }, 
+      });
       setIsModalOpen(true);
 
     } catch (error) {
-      console.error(`Gagal ${action} pengguna:`, error);
-      
+      const apiError = error as ApiError;
+      console.error(`Gagal ${action}:`, error);
       setModalConfig({
-        title: `Gagal ${action}`,
-        message: 'Terjadi kesalahan saat memproses permintaan.',
+        title: 'Gagal',
+        message: apiError.response?.data?.message || 'Terjadi kesalahan sistem.',
         variant: 'danger',
         confirmLabel: 'Tutup',
         showCancelButton: false,
-        onConfirm: closeModal,
+        onConfirm: () => setIsModalOpen(false),
       });
       setIsModalOpen(true);
     } finally {
@@ -321,19 +219,28 @@ export default function UsersPendingPage() {
     }
   };
 
-  // Tabs
+  const closeModal = () => setIsModalOpen(false);
+
+  // --- 3. UI HELPERS ---
+
   const dlhTabs = [
     { label: 'Provinsi', value: 'provinsi' },
     { label: 'Kab/Kota', value: 'kabkota' },
   ];
 
-  // Stats Data
-  const statsData = [
-    { title: 'Total DLH Provinsi Pending', value: stats.dlhProvinsi, link: '#provinsi' },
-    { title: 'Total DLH Kab/Kota Pending', value: stats.dlhKabKota, link: '#kabkota' },
-  ];
-
-  const isLoading = loading['dlh-prov-pending'] || loading['dlh-kab-pending'];
+  // Transform data untuk tabel (Sesuaikan dengan UserTableRow interface)
+  const tableData: UserTableRow[] = useMemo(() => {
+    return users.map(u => ({
+      id: u.id,
+      name: u.dinas?.nama_dinas || u.email,
+      email: u.email,
+      role: 'DLH',
+      jenis_dlh: activeTab === 'provinsi' ? 'DLH Provinsi' : 'DLH Kab-Kota',
+      status: 'pending',
+      province: u.province_name ?? '-',
+      regency: u.regency_name ?? '-',
+    }));
+  }, [users, activeTab]);
 
   return (
     <div className="p-8 space-y-8">
@@ -343,28 +250,31 @@ export default function UsersPendingPage() {
         <p className="text-gray-600">Daftar pengguna DLH yang menunggu persetujuan admin.</p>
       </header>
 
-      {/* Statistik */}
+      {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {statsData.map((stat, index) => (
-          <Link
-            key={index}
-            href={stat.link}
-            onClick={(e: React.MouseEvent<HTMLAnchorElement>) => {
-              e.preventDefault();
-              setActiveTab(stat.link === '#provinsi' ? 'provinsi' : 'kabkota');
-            }}
-            className="block transition-transform hover:scale-105"
-          >
+        <div onClick={() => setActiveTab('provinsi')} className="cursor-pointer group">
             <StatCard
-              title={stat.title}
-              value={stat.value ?? 0}
-              {...statCardColors[index]}
+                title="Total DLH Provinsi Pending"
+                value={stats.isLoaded ? stats.dlhProvinsi : '...'}
+                type="custom"
+                icon={<FiAlertCircle className="w-6 h-6" />}
+                {...statCardColors[0]}
+                className={activeTab === 'provinsi' ? 'ring-2 ring-yellow-400 ring-offset-2' : ''}
             />
-          </Link>
-        ))}
+        </div>
+        <div onClick={() => setActiveTab('kabkota')} className="cursor-pointer group">
+            <StatCard
+                title="Total DLH Kab/Kota Pending"
+                value={stats.isLoaded ? stats.dlhKabKota : '...'}
+                type="custom"
+                icon={<FiClock className="w-6 h-6" />}
+                {...statCardColors[1]}
+                className={activeTab === 'kabkota' ? 'ring-2 ring-yellow-400 ring-offset-2' : ''}
+            />
+        </div>
       </div>
 
-      {/* DLH Tabs */}
+      {/* Tabs */}
       <InnerNav
         tabs={dlhTabs}
         activeTab={activeTab}
@@ -379,7 +289,7 @@ export default function UsersPendingPage() {
           </div>
           <input
             type="text"
-            placeholder={`Cari email atau nama dinas...`}
+            placeholder="Cari email atau nama dinas..."
             className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-yellow-500 focus:border-yellow-500 transition-all outline-none"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
@@ -387,27 +297,15 @@ export default function UsersPendingPage() {
         </div>
       </div>
 
-      {/* Loading State */}
-      {isLoading && (
+      {/* Table Content */}
+      {loading ? (
         <div className="flex justify-center items-center py-12">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-yellow-600"></div>
         </div>
-      )}
-
-      {/* Tabel User */}
-      {!isLoading && (
+      ) : (
         <>
           <UserTable
-            users={filteredUsers.map((u: any) => ({
-              id: u.id,
-              name: u.email,
-              email: u.email,
-              role: 'DLH',
-              jenis_dlh: activeTab === 'provinsi' ? 'DLH Provinsi' : 'DLH Kab-Kota',
-              status: 'pending' as const,
-              province: u.province_name ?? '-',
-              regency: u.regency_name ?? '-',
-            }))}
+            users={tableData}
             onApprove={handleApproveClick}
             onReject={handleRejectClick}
             showLocation={true}
@@ -416,29 +314,27 @@ export default function UsersPendingPage() {
           />
 
           {/* Pagination */}
-          <div className="flex justify-between items-center mt-6">
-            <span className="text-sm text-gray-600">
-              Menampilkan {filteredUsers.length} dari {getCurrentData?.total || 0} pengguna
-            </span>
-
-            <Pagination
-              currentPage={currentPage}
-              totalPages={totalPages}
-              onPageChange={handlePageChange}
-              siblings={1}
-            />
-          </div>
+          {totalItems > 0 ? (
+            <div className="flex justify-between items-center mt-6">
+                <span className="text-sm text-gray-600">
+                Menampilkan {users.length} dari {totalItems} pengguna
+                </span>
+                <Pagination
+                currentPage={currentPage}
+                totalPages={totalPages}
+                onPageChange={(page) => setCurrentPage(page)}
+                siblings={1}
+                />
+            </div>
+          ) : (
+            <div className="text-center py-12 border-2 border-dashed border-gray-200 rounded-xl mt-4">
+                <p className="text-gray-500">Tidak ada data pending.</p>
+            </div>
+          )}
         </>
       )}
 
-      {/* Empty State */}
-      {!isLoading && filteredUsers.length === 0 && (
-        <div className="text-center py-12">
-          <p className="text-gray-500">Tidak ada pengguna pending</p>
-        </div>
-      )}
-
-      {/* Modal */}
+      {/* Modal Universal */}
       <UniversalModal
         isOpen={isModalOpen}
         onClose={closeModal}
